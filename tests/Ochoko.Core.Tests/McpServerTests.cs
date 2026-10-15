@@ -32,7 +32,7 @@ public class McpServerTests
 
     [Theory]
     [InlineData("2025-06-18", "2025-06-18")]
-    [InlineData("2025-03-26", "2025-03-26")]
+    [InlineData("2025-03-26", "2025-06-18")]
     [InlineData("2024-11-05", "2025-06-18")]
     public async Task Initialize_answers_supported_version(string requested, string expected)
     {
@@ -42,6 +42,33 @@ public class McpServerTests
         Assert.Equal(expected, (string)body["result"]!["protocolVersion"]!);
         Assert.Equal("ochoko", (string)body["result"]!["serverInfo"]!["name"]!);
         Assert.False((bool)body["result"]!["capabilities"]!["tools"]!["listChanged"]!);
+    }
+
+    [Theory]
+    [InlineData("2025-03-26")]
+    [InlineData("bogus")]
+    public async Task Unsupported_protocol_version_header_is_400(string header)
+    {
+        var r = await _server.HandleAsync("{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"ping\"}", "dev", CancellationToken.None, header);
+        Assert.Equal(400, r.Status);
+        var notification = await _server.HandleAsync("{\"jsonrpc\":\"2.0\",\"method\":\"notifications/initialized\"}", "dev", CancellationToken.None, header);
+        Assert.Equal(400, notification.Status);
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("2025-06-18")]
+    public async Task Missing_or_current_protocol_version_header_is_accepted(string? header)
+    {
+        var r = await _server.HandleAsync("{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"ping\"}", "dev", CancellationToken.None, header);
+        Assert.Equal(200, r.Status);
+    }
+
+    [Fact]
+    public async Task Initialize_ignores_protocol_version_header()
+    {
+        var r = await _server.HandleAsync("{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\",\"params\":{}}", "dev", CancellationToken.None, "2024-11-05");
+        Assert.Equal(200, r.Status);
     }
 
     [Fact]
@@ -102,6 +129,8 @@ public class McpServerTests
         Assert.Equal("audio", (string)result["content"]![0]!["type"]!);
         Assert.Equal("audio/wav", (string)result["content"]![0]!["mimeType"]!);
         Assert.Equal(_engine.Wav, Convert.FromBase64String((string)result["content"]![0]!["data"]!));
+        Assert.Equal("text", (string)result["content"]![1]!["type"]!);
+        Assert.Equal(result["structuredContent"]!.ToJsonString(), JsonNode.Parse((string)result["content"]![1]!["text"]!)!.ToJsonString());
         Assert.Equal(1000, (int)result["structuredContent"]!["duration_ms"]!);
         Assert.Equal(_engine.Wav.Length, (int)result["structuredContent"]!["bytes"]!);
         Assert.Equal(1.2, _engine.LastRequest!.PresetOverrides["Speed"]);

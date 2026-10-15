@@ -27,7 +27,6 @@ public sealed class McpResponse
 public sealed class McpServer
 {
     public const string LatestProtocolVersion = "2025-06-18";
-    private static readonly string[] SupportedProtocolVersions = { LatestProtocolVersion, "2025-03-26" };
 
     private const int ParseError = -32700;
     private const int InvalidRequest = -32600;
@@ -53,7 +52,7 @@ public sealed class McpServer
         _log = log;
     }
 
-    public async Task<McpResponse> HandleAsync(string body, string caller, CancellationToken ct)
+    public async Task<McpResponse> HandleAsync(string body, string caller, CancellationToken ct, string? protocolVersionHeader = null)
     {
         JsonDocument doc;
         try
@@ -102,6 +101,13 @@ public sealed class McpServer
             }
 
             var method = methodEl.GetString()!;
+
+            // ヘッダーがなければ仕様どおり LatestProtocolVersion とみなす。initialize は交渉前なので見ない
+            if (method != "initialize" && protocolVersionHeader != null && protocolVersionHeader != LatestProtocolVersion)
+            {
+                return Error(id, InvalidRequest, "Unsupported MCP-Protocol-Version: " + protocolVersionHeader, 400);
+            }
+
             if (!hasId)
             {
                 return new McpResponse(202, null);
@@ -113,7 +119,7 @@ public sealed class McpServer
                 switch (method)
                 {
                     case "initialize":
-                        return Result(id, Initialize(parameters));
+                        return Result(id, Initialize());
                     case "ping":
                         return Result(id, new JsonObject());
                     case "tools/list":
@@ -140,19 +146,11 @@ public sealed class McpServer
         }
     }
 
-    private JsonObject Initialize(JsonElement? parameters)
+    private JsonObject Initialize()
     {
-        var requested = parameters is JsonElement el && el.ValueKind == JsonValueKind.Object
-            && el.TryGetProperty("protocolVersion", out var v) && v.ValueKind == JsonValueKind.String
-            ? v.GetString()
-            : null;
-        var version = requested != null && Array.IndexOf(SupportedProtocolVersions, requested) >= 0
-            ? requested
-            : LatestProtocolVersion;
-
         return new JsonObject
         {
-            ["protocolVersion"] = version,
+            ["protocolVersion"] = LatestProtocolVersion,
             ["capabilities"] = new JsonObject { ["tools"] = new JsonObject { ["listChanged"] = false } },
             ["serverInfo"] = new JsonObject { ["name"] = "ochoko", ["version"] = _version },
         };
@@ -206,6 +204,7 @@ public sealed class McpServer
         }
 
         _log.Info($"caller={caller} tool=synthesize preset={request.Preset} text_len={request.Text.Length} bytes={wav.Length} duration_ms={duration} ms={sw.ElapsedMilliseconds}");
+        var structured = new JsonObject { ["duration_ms"] = duration.Value, ["bytes"] = wav.Length };
         return new JsonObject
         {
             ["content"] = new JsonArray
@@ -216,8 +215,9 @@ public sealed class McpServer
                     ["data"] = Convert.ToBase64String(wav),
                     ["mimeType"] = "audio/wav",
                 },
+                new JsonObject { ["type"] = "text", ["text"] = structured.ToJsonString(Json) },
             },
-            ["structuredContent"] = new JsonObject { ["duration_ms"] = duration.Value, ["bytes"] = wav.Length },
+            ["structuredContent"] = structured,
         };
     }
 
