@@ -10,19 +10,23 @@ public sealed class OchokoConfig
     public const string DefaultConfigDir = @"C:\ProgramData\ochoko";
 
     public string ConfigDir { get; private set; } = DefaultConfigDir;
-    public string DataDir { get; private set; } = @"C:\apps\ochoko\data";
+    public const string DefaultDataDir = @"C:\apps\ochoko\data";
+
+    public string DataDir { get; private set; } = DefaultDataDir;
     public int Port { get; private set; } = 8190;
     public string ProgId { get; private set; } = "AI.Talk.Editor.Api.TtsControl";
 
     /// <summary>null なら GetAvailableHostNames() の先頭を使う。</summary>
     public string? HostName { get; private set; }
 
-    public TimeSpan OperationTimeout { get; private set; } = TimeSpan.FromSeconds(60);
+    // BusyWait + OperationTimeout は、MCP クライアントの既定のリクエストタイムアウト(60 秒)より短くする
+    public TimeSpan OperationTimeout { get; private set; } = TimeSpan.FromSeconds(45);
     public TimeSpan BusyWait { get; private set; } = TimeSpan.FromSeconds(5);
     public TimeSpan WarmupTimeout { get; private set; } = TimeSpan.FromSeconds(180);
 
     public string TokensPath => Path.Combine(ConfigDir, "tokens.json");
     public string LogDir => Path.Combine(DataDir, "logs");
+    public string BaselinePath => Path.Combine(DataDir, "master-baseline.json");
     public string TmpDir => Path.Combine(DataDir, "tmp");
     public string Prefix => "http://+:" + Port + "/";
 
