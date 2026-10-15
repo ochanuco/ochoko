@@ -10,6 +10,7 @@ permissions:
 
 jobs:
   check:
+    name: ci / check
     runs-on: windows-latest
     timeout-minutes: 15
     steps:
