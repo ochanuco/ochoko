@@ -13,7 +13,7 @@ $deadline = (Get-Date).AddSeconds(60)
 $last = ""
 while ((Get-Date) -lt $deadline) {
     try {
-        $res = Invoke-WebRequest -UseBasicParsing -Uri "http://localhost:8190/healthz" -TimeoutSec 5
+        $res = Invoke-WebRequest -UseBasicParsing -Uri "http://127.0.0.1:8190/healthz" -TimeoutSec 5
         if ($res.StatusCode -eq 200) {
             $health = $res.Content | ConvertFrom-Json
             # 古い版のプロセスが残って応答している場合を成功にしない
