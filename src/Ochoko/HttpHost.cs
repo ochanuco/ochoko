@@ -12,6 +12,7 @@ namespace Ochoko;
 public sealed class HttpHost
 {
     private const int MaxBodyBytes = 1024 * 1024;
+    private static readonly TimeSpan AcceptBackoff = TimeSpan.FromMilliseconds(500);
 
     private readonly HttpListener _listener = new HttpListener();
     private readonly McpServer _mcp;
@@ -32,6 +33,7 @@ public sealed class HttpHost
 
     public void Start() => _listener.Start();
 
+    /// <summary>ct が取り消されるまで受け付ける。リスナー自体が止まったときは例外を投げる。</summary>
     public async Task RunAsync(CancellationToken ct)
     {
         using (ct.Register(() => _listener.Close()))
@@ -45,7 +47,28 @@ public sealed class HttpHost
                 }
                 catch (Exception e) when (e is HttpListenerException || e is ObjectDisposedException || e is InvalidOperationException)
                 {
-                    break;
+                    if (ct.IsCancellationRequested)
+                    {
+                        break;
+                    }
+
+                    if (!_listener.IsListening)
+                    {
+                        throw new InvalidOperationException("the HTTP listener stopped: " + e.Message, e);
+                    }
+
+                    // 接続単位の一時的な失敗。リスナーは生きているので待って続ける
+                    _log.Warn("accept failed: " + e.Message);
+                    try
+                    {
+                        await Task.Delay(AcceptBackoff, ct).ConfigureAwait(false);
+                    }
+                    catch (OperationCanceledException)
+                    {
+                        break;
+                    }
+
+                    continue;
                 }
 
                 _ = Task.Run(() => HandleAsync(context, ct));
@@ -86,7 +109,8 @@ public sealed class HttpHost
             }
             catch (Exception)
             {
-                // 応答先が切れているだけ
+                // ヘッダー送出後などで 500 を書けない。接続ごと切る
+                context.Response.Abort();
             }
         }
     }
@@ -130,7 +154,7 @@ public sealed class HttpHost
             return;
         }
 
-        var response = await _mcp.HandleAsync(text, caller, ct).ConfigureAwait(false);
+        var response = await _mcp.HandleAsync(text, caller, ct, request.Headers["MCP-Protocol-Version"]).ConfigureAwait(false);
         await WriteAsync(context, response.Status, response.Body).ConfigureAwait(false);
     }
 
