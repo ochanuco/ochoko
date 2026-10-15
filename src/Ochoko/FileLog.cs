@@ -11,12 +11,13 @@ public sealed class FileLog : ILog
     private const int KeepDays = 14;
     private readonly string _dir;
     private readonly object _gate = new object();
+    private DateTime _prunedOn;
 
     public FileLog(string dir)
     {
         _dir = dir;
         Directory.CreateDirectory(dir);
-        Prune();
+        Prune(DateTime.Now);
     }
 
     public void Info(string message) => Write("INFO", message);
@@ -31,28 +32,34 @@ public sealed class FileLog : ILog
         {
             lock (_gate)
             {
+                if (now.Date != _prunedOn)
+                {
+                    Prune(now);
+                }
+
                 File.AppendAllText(Path.Combine(_dir, "ochoko-" + now.ToString("yyyyMMdd") + ".log"), line, new UTF8Encoding(false));
             }
         }
-        catch (IOException)
+        catch (Exception e) when (e is IOException || e is UnauthorizedAccessException)
         {
             // ログに書けないことで本処理を止めない
         }
     }
 
-    private void Prune()
+    private void Prune(DateTime now)
     {
+        _prunedOn = now.Date;
         try
         {
             foreach (var file in Directory.GetFiles(_dir, "ochoko-*.log"))
             {
-                if (File.GetLastWriteTime(file) < DateTime.Now.AddDays(-KeepDays))
+                if (File.GetLastWriteTime(file) < now.AddDays(-KeepDays))
                 {
                     File.Delete(file);
                 }
             }
         }
-        catch (IOException)
+        catch (Exception e) when (e is IOException || e is UnauthorizedAccessException)
         {
         }
     }
