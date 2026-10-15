@@ -9,11 +9,50 @@ namespace Ochoko;
 
 public static class Program
 {
+    private static ILog? s_log;
+
     public static int Main()
+    {
+        AppDomain.CurrentDomain.UnhandledException += (_, e) => ReportFatal("unhandled exception: " + e.ExceptionObject);
+        try
+        {
+            return Run();
+        }
+        catch (Exception e)
+        {
+            ReportFatal("fatal: " + e);
+            return 2;
+        }
+    }
+
+    // WinExe にはコンソールがないので、ロガーができる前の失敗は既定のデータ領域か一時フォルダのログに残す
+    private static void ReportFatal(string message)
+    {
+        var log = s_log;
+        if (log == null)
+        {
+            foreach (var dir in new[] { Path.Combine(OchokoConfig.DefaultDataDir, "logs"), Path.Combine(Path.GetTempPath(), "ochoko") })
+            {
+                try
+                {
+                    log = new FileLog(dir);
+                    break;
+                }
+                catch (Exception e) when (e is IOException || e is UnauthorizedAccessException)
+                {
+                }
+            }
+        }
+
+        log?.Error(message);
+    }
+
+    private static int Run()
     {
         var config = OchokoConfig.Load(OchokoConfig.DefaultConfigDir);
         Directory.CreateDirectory(config.DataDir);
         var log = new FileLog(config.LogDir);
+        s_log = log;
         var version = VersionInfo.Get();
 
         BearerAuthenticator auth;
@@ -55,7 +94,15 @@ public static class Program
             using (new Timer(_ => keepAwake.Refresh(), null, TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(1)))
             using (new Timer(_ => Reconnect(engine, cts.Token), null, TimeSpan.Zero, TimeSpan.FromSeconds(30)))
             {
-                host.RunAsync(cts.Token).GetAwaiter().GetResult();
+                try
+                {
+                    host.RunAsync(cts.Token).GetAwaiter().GetResult();
+                }
+                catch (InvalidOperationException e)
+                {
+                    log.Error(e.Message);
+                    return 1;
+                }
             }
         }
 
