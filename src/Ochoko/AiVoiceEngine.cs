@@ -4,6 +4,7 @@ using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Text;
 using System.Text.Encodings.Web;
 using System.Text.Json;
 using System.Text.Json.Nodes;
@@ -19,10 +20,19 @@ namespace Ochoko;
 /// </summary>
 public sealed class AiVoiceEngine : IVoiceEngine, IDisposable
 {
-    // HostStatus。値は公式ドキュメントに基づく。実機で確認すること
+    // HostStatus。値は公式ドキュメントに基づく
     private const int StatusNotRunning = 0;
     private const int StatusNotConnected = 1;
     private const int StatusBusy = 3;
+
+    // 操作の予算(OperationTimeout)とは別の、個々の待ち
+    private static readonly TimeSpan BusyStatusWait = TimeSpan.FromSeconds(10);
+    private static readonly TimeSpan SaveWait = TimeSpan.FromSeconds(10);
+    private static readonly TimeSpan AudioFileWait = TimeSpan.FromSeconds(10);
+
+    // タイムアウト後もこの時間 STA スレッドが戻らなければ、COM が固まったとみなしてプロセスを終える
+    private static readonly TimeSpan StuckGrace = TimeSpan.FromSeconds(20);
+    private const int StuckExitCode = 3;
 
     private static readonly JsonSerializerOptions JsonOptions = new JsonSerializerOptions
     {
@@ -103,21 +113,30 @@ public sealed class AiVoiceEngine : IVoiceEngine, IDisposable
             var tcs = new TaskCompletionSource<T>(TaskCreationOptions.RunContinuationsAsynchronously);
             _queue.Add(() =>
             {
+                T result = default!;
+                Exception? error = null;
                 try
                 {
-                    tcs.SetResult(work(timeout));
+                    result = work(timeout);
                 }
                 catch (EngineException e)
                 {
-                    tcs.SetException(e);
+                    error = e;
                 }
                 catch (Exception e)
                 {
-                    tcs.SetException(new EngineException("A.I.VOICE error: " + e.Message, e));
+                    error = new EngineException("A.I.VOICE error: " + e.Message, e);
                 }
-                finally
+
+                // 完了を通知した直後の次の呼び出しが「処理中」と判定されないよう、先に戻す
+                Volatile.Write(ref _running, 0);
+                if (error != null)
                 {
-                    Volatile.Write(ref _running, 0);
+                    tcs.SetException(error);
+                }
+                else
+                {
+                    tcs.SetResult(result);
                 }
             });
 
@@ -134,6 +153,7 @@ public sealed class AiVoiceEngine : IVoiceEngine, IDisposable
                 ct.ThrowIfCancellationRequested();
                 SetState(EngineState.Unhealthy);
                 _log.Error("operation timed out after " + (int)timeout.TotalSeconds + " s; engine marked unhealthy");
+                _ = Task.Run(() => TerminateIfStuckAsync(tcs.Task));
                 throw new EngineException("timed out after " + (int)timeout.TotalSeconds + " s");
             }
         }
@@ -141,6 +161,20 @@ public sealed class AiVoiceEngine : IVoiceEngine, IDisposable
         {
             _gate.Release();
         }
+    }
+
+    // STA スレッドが固まると以降の呼び出しがすべて失敗する。終了コード非 0 で落として、タスクスケジューラに起こし直させる
+    private async Task TerminateIfStuckAsync(Task operation)
+    {
+        if (await Task.WhenAny(operation, Task.Delay(StuckGrace)).ConfigureAwait(false) == operation)
+        {
+            return;
+        }
+
+        _log.Error("the COM thread is still stuck " + (int)StuckGrace.TotalSeconds + " s after the timeout; exiting with code " + StuckExitCode);
+        // Exit が COM の後始末で固まる場合に備える
+        _ = Task.Delay(TimeSpan.FromSeconds(5)).ContinueWith(_ => System.Diagnostics.Process.GetCurrentProcess().Kill());
+        Environment.Exit(StuckExitCode);
     }
 
     private dynamic EnsureConnected(TimeSpan budget)
@@ -179,14 +213,10 @@ public sealed class AiVoiceEngine : IVoiceEngine, IDisposable
             if (status == StatusBusy)
             {
                 // 再生や別の合成が終わるのを待つ。待ちきれなくても先に進めて、API 側の判断に任せる
-                WaitStatus((object)tts, s => s != StatusBusy, DateTime.UtcNow + TimeSpan.FromSeconds(10), null);
+                WaitStatus((object)tts, s => s != StatusBusy, DateTime.UtcNow + BusyStatusWait, null);
             }
 
-            if (_baselineMaster == null)
-            {
-                _baselineMaster = (JsonObject)JsonNode.Parse((string)tts.MasterControl)!;
-                _log.Info("captured the baseline MasterControl");
-            }
+            _baselineMaster ??= LoadOrCaptureBaseline((object)tts);
 
             SetState(EngineState.Ready);
             return tts;
@@ -194,6 +224,7 @@ public sealed class AiVoiceEngine : IVoiceEngine, IDisposable
         catch (Exception e)
         {
             SetState(EngineState.Unavailable);
+            DisconnectQuietly();
             _tts = null;
             if (e is EngineException)
             {
@@ -202,6 +233,55 @@ public sealed class AiVoiceEngine : IVoiceEngine, IDisposable
 
             throw new EngineException("cannot connect to A.I.VOICE: " + e.Message, e);
         }
+    }
+
+    private void DisconnectQuietly()
+    {
+        try
+        {
+            if (_tts != null)
+            {
+                dynamic old = _tts;
+                old.Disconnect();
+            }
+        }
+        catch (Exception)
+        {
+            // 既に切れているか応答しない。捨てるだけなので無視する
+        }
+    }
+
+    // Editor の MasterControl は合成のたびに書き換わる。クラッシュで汚れた値を基準にしないよう、最初の 1 回だけ読んでファイルに固定する
+    private JsonObject LoadOrCaptureBaseline(object ttsObject)
+    {
+        dynamic tts = ttsObject;
+        try
+        {
+            if (File.Exists(_config.BaselinePath))
+            {
+                var saved = (JsonObject)JsonNode.Parse(File.ReadAllText(_config.BaselinePath))!;
+                _log.Info("loaded the baseline MasterControl from " + _config.BaselinePath);
+                return saved;
+            }
+        }
+        catch (Exception e) when (e is IOException || e is UnauthorizedAccessException || e is JsonException || e is InvalidCastException)
+        {
+            _log.Warn("ignoring unreadable " + _config.BaselinePath + ": " + e.Message);
+        }
+
+        var captured = (JsonObject)JsonNode.Parse((string)tts.MasterControl)!;
+        try
+        {
+            Directory.CreateDirectory(_config.DataDir);
+            File.WriteAllText(_config.BaselinePath, captured.ToJsonString(JsonOptions), new UTF8Encoding(false));
+        }
+        catch (Exception e) when (e is IOException || e is UnauthorizedAccessException)
+        {
+            _log.Warn("could not save the baseline MasterControl: " + e.Message);
+        }
+
+        _log.Info("captured the baseline MasterControl");
+        return captured;
     }
 
     private static int Status(object tts)
@@ -261,27 +341,42 @@ public sealed class AiVoiceEngine : IVoiceEngine, IDisposable
         _writtenPresets[working] = json;
 
         tts.CurrentVoicePresetName = working;
-        tts.MasterControl = BuildMaster(r);
-        tts.Text = r.Text;
 
         Directory.CreateDirectory(_config.TmpDir);
         var path = Path.Combine(_config.TmpDir, Guid.NewGuid().ToString("N") + ".wav");
         try
         {
+            tts.MasterControl = BuildMaster(r);
+            tts.Text = r.Text;
             tts.SaveAudioToFile(path);
-            WaitStatus((object)tts, s => s != StatusBusy, DateTime.UtcNow + TimeSpan.FromSeconds(10), null);
+            WaitStatus((object)tts, s => s != StatusBusy, DateTime.UtcNow + SaveWait, null);
             return ReadWhenReady(path);
         }
         finally
         {
+            RestoreMaster((object)tts);
             try
             {
                 File.Delete(path);
             }
-            catch (IOException e)
+            catch (Exception e) when (e is IOException || e is UnauthorizedAccessException)
             {
                 _log.Warn("could not delete " + path + ": " + e.Message);
             }
+        }
+    }
+
+    // 次の呼び出しや、ユーザーが GUI で見る値が、前の要求の上書きで汚れないようにする
+    private void RestoreMaster(object ttsObject)
+    {
+        try
+        {
+            dynamic tts = ttsObject;
+            tts.MasterControl = _baselineMaster!.ToJsonString(JsonOptions);
+        }
+        catch (Exception e)
+        {
+            _log.Warn("could not restore the baseline MasterControl: " + e.Message);
         }
     }
 
@@ -353,7 +448,7 @@ public sealed class AiVoiceEngine : IVoiceEngine, IDisposable
 
     private static byte[] ReadWhenReady(string path)
     {
-        var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(10);
+        var deadline = DateTime.UtcNow + AudioFileWait;
         while (true)
         {
             try
