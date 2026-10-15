@@ -37,6 +37,9 @@ function Invoke-Native([scriptblock]$Command, [string]$What, [switch]$AllowFailu
 }
 
 # C:\apps は chabatake の deploy.ps1 が作り、chanu に変更を許している。releases と data はそこから継承する
+if (-not (Test-Path -LiteralPath (Split-Path $AppRoot) -PathType Container)) {
+    throw "$(Split-Path $AppRoot) がない。先に chabatake の deploy.ps1 を実行する"
+}
 New-Item -ItemType Directory -Force -Path "$AppRoot\releases", "$AppRoot\data" | Out-Null
 
 # 秘密を含む設定。管理者と SYSTEM は全権、chanu は読むだけ
