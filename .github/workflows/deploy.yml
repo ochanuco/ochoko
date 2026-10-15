@@ -1,0 +1,117 @@
+name: deploy
+run-name: deploy ochoko @ ${{ inputs.ref || github.sha }}
+
+# 本番(GPU 機)へのデプロイ。main への push で出し、承認は Environment production で止める。
+# workflow_dispatch はロールバックと出し直し用。zip を Release として公開し、
+# GPU 機への配備は chabatake の gpu-box-app に任せる。
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - "**/*.md"
+      - "docs/**"
+      - "tests/**"
+      - ".github/workflows/ci.yml"
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: デプロイする ref(main、または main 上のコミット SHA。古い SHA はロールバック)
+        required: true
+        default: main
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: build the release zip
+    runs-on: windows-latest
+    timeout-minutes: 15
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      sha: ${{ steps.version.outputs.sha }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ inputs.ref || github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - id: version
+        shell: bash
+        env:
+          RUN_NUMBER: ${{ github.run_number }}
+        run: |
+          sha=$(git rev-parse HEAD)
+          git fetch --no-tags origin main
+          if ! git merge-base --is-ancestor "$sha" FETCH_HEAD; then
+            echo "::error::$sha is not a commit on main"
+            exit 1
+          fi
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+          echo "version=r${RUN_NUMBER}-${sha:0:7}" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/setup-dotnet@c2fa09f4bde5ebb9d1777cf28262a3eb3db3ced7 # v5.2.0
+        with:
+          dotnet-version: 10.0.x
+
+      - run: dotnet test -c Release
+
+      - name: publish and zip
+        shell: pwsh
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          SHA: ${{ steps.version.outputs.sha }}
+        run: |
+          dotnet publish src/Ochoko -c Release -o stage -p:InformationalVersion=$env:VERSION
+          if ($LASTEXITCODE -ne 0) { throw "dotnet publish failed" }
+          Copy-Item -Recurse deploy stage/deploy
+          $release = [ordered]@{ version = $env:VERSION; commit = $env:SHA } | ConvertTo-Json
+          [IO.File]::WriteAllText((Join-Path $PWD "stage/release.json"), $release, (New-Object Text.UTF8Encoding $false))
+          Add-Type -AssemblyName System.IO.Compression.FileSystem
+          [IO.Compression.ZipFile]::CreateFromDirectory((Join-Path $PWD "stage"), (Join-Path $PWD "ochoko-win-x64.zip"))
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ochoko-zip
+          path: ochoko-win-x64.zip
+          if-no-files-found: error
+
+  deploy:
+    name: publish the release and deploy it through chabatake
+    needs: build
+    runs-on: ubuntu-latest
+    environment: production
+    timeout-minutes: 240
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      SHA: ${{ needs.build.outputs.sha }}
+      VERSION: ${{ needs.build.outputs.version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: main
+          sparse-checkout: .github
+          persist-credentials: false
+
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: ochoko-zip
+
+      - id: release
+        run: bash .github/scripts/publish.sh
+
+      - uses: ./.github/actions/gpu-box-app
+        with:
+          action: deploy
+          version: ${{ steps.release.outputs.version }}
+          op-service-account-token: ${{ secrets.OP_SA_DEPLOY }}
+
+      - run: bash .github/scripts/prune.sh 3
