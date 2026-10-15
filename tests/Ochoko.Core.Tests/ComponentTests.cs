@@ -100,6 +100,17 @@ public class WavInfoTests
     }
 
     [Fact]
+    public void Returns_null_for_a_huge_non_data_chunk()
+    {
+        var wav = new byte[64];
+        System.Text.Encoding.ASCII.GetBytes("RIFF").CopyTo(wav, 0);
+        System.Text.Encoding.ASCII.GetBytes("WAVE").CopyTo(wav, 8);
+        System.Text.Encoding.ASCII.GetBytes("junk").CopyTo(wav, 12);
+        BitConverter.GetBytes(uint.MaxValue).CopyTo(wav, 16);
+        Assert.Null(WavInfo.TryGetDurationMs(wav));
+    }
+
+    [Fact]
     public void Returns_null_for_non_wav()
     {
         Assert.Null(WavInfo.TryGetDurationMs(new byte[] { 1, 2, 3 }));

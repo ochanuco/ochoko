@@ -14,15 +14,15 @@ public static class WavInfo
         }
 
         long? byteRate = null;
-        var pos = 12;
+        long pos = 12;
         while (pos + 8 <= wav.Length)
         {
-            var id = Tag(wav, pos);
-            long size = BitConverter.ToUInt32(wav, pos + 4);
+            var id = Tag(wav, (int)pos);
+            long size = BitConverter.ToUInt32(wav, (int)pos + 4);
             var body = pos + 8;
             if (id == "fmt " && size >= 16 && body + 16 <= wav.Length)
             {
-                byteRate = BitConverter.ToUInt32(wav, body + 8);
+                byteRate = BitConverter.ToUInt32(wav, (int)body + 8);
             }
             else if (id == "data")
             {
@@ -37,7 +37,7 @@ public static class WavInfo
                 return length * 1000 / byteRate.Value;
             }
 
-            pos = body + (int)Math.Min(size + (size & 1), int.MaxValue - body);
+            pos = body + size + (size & 1);
         }
 
         return null;
