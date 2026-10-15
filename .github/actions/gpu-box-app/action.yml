@@ -1,0 +1,48 @@
+name: gpu-box app
+description: Call chabatake's gpu-box-app workflow for ochoko and wait for its result.
+
+inputs:
+  action:
+    description: deploy, restart or op
+    required: true
+  version:
+    description: release tag to deploy (action deploy)
+    default: ""
+  op:
+    description: allow-listed operation name (action op)
+    default: ""
+  op-service-account-token:
+    description: 1Password service account that reads gh-deploy/gpu-box-dispatch
+    required: true
+  wait-minutes:
+    description: how long to wait for the chabatake run, queueing included
+    default: "230"
+
+runs:
+  using: composite
+  steps:
+    - id: app
+      uses: 1password/load-secrets-action@70062d7a876d3eb6334754fa26efd2fbd90c32f2 # v5.0.1
+      env:
+        OP_SERVICE_ACCOUNT_TOKEN: ${{ inputs.op-service-account-token }}
+        CLIENT_ID: op://gh-deploy/gpu-box-dispatch/client_id
+        PRIVATE_KEY: op://gh-deploy/gpu-box-dispatch/private_key
+
+    - id: token
+      uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+      with:
+        client-id: ${{ steps.app.outputs.CLIENT_ID }}
+        private-key: ${{ steps.app.outputs.PRIVATE_KEY }}
+        owner: ochanuco
+        repositories: chabatake
+        permission-actions: write
+
+    - shell: bash
+      env:
+        GH_TOKEN: ${{ steps.token.outputs.token }}
+        ACTION: ${{ inputs.action }}
+        VERSION: ${{ inputs.version }}
+        OP: ${{ inputs.op }}
+        WAIT_MINUTES: ${{ inputs.wait-minutes }}
+        REQUEST_ID: ${{ github.repository }}#${{ github.run_id }}
+      run: bash "$GITHUB_ACTION_PATH/dispatch.sh"
