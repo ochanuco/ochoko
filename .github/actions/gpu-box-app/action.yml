@@ -3,13 +3,10 @@ description: Call chabatake's gpu-box-app workflow for ochoko and wait for its r
 
 inputs:
   action:
-    description: deploy, restart or op
+    description: chabatake gpu-box-app action (deploy or restart)
     required: true
   version:
     description: release tag to deploy (action deploy)
-    default: ""
-  op:
-    description: allow-listed operation name (action op)
     default: ""
   op-service-account-token:
     description: 1Password service account that reads gh-deploy/gpu-box-dispatch
@@ -42,7 +39,6 @@ runs:
         GH_TOKEN: ${{ steps.token.outputs.token }}
         ACTION: ${{ inputs.action }}
         VERSION: ${{ inputs.version }}
-        OP: ${{ inputs.op }}
         WAIT_MINUTES: ${{ inputs.wait-minutes }}
         REQUEST_ID: ${{ github.repository }}#${{ github.run_id }}
       run: bash "$GITHUB_ACTION_PATH/dispatch.sh"

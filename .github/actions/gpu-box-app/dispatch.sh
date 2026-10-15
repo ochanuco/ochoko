@@ -6,12 +6,11 @@ set -euo pipefail
 repo=ochanuco/chabatake
 workflow=gpu-box-app.yml
 
-body=$(jq -n --arg action "$ACTION" --arg version "$VERSION" --arg op "$OP" --arg request_id "$REQUEST_ID" '{
+body=$(jq -n --arg action "$ACTION" --arg version "$VERSION" --arg request_id "$REQUEST_ID" '{
   ref: "production",
   return_run_details: true,
   inputs: ({app: "ochoko", action: $action, request_id: $request_id}
-    + (if $version != "" then {version: $version} else {} end)
-    + (if $op != "" then {op: $op} else {} end))
+    + (if $version != "" then {version: $version} else {} end))
 }')
 dispatched_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 for attempt in 1 2 3; do
@@ -44,7 +43,16 @@ echo "chabatake run: $url"
 
 deadline=$(( $(date +%s) + WAIT_MINUTES * 60 ))
 while :; do
-  read -r status conclusion < <(gh api "repos/$repo/actions/runs/$run_id" --jq '"\(.status) \(.conclusion // "-")"')
+  # 一時的な API 失敗でジョブを落とさない。取れなければ次の周期まで待つ
+  status=""
+  conclusion="-"
+  for _ in 1 2 3; do
+    if line=$(gh api "repos/$repo/actions/runs/$run_id" --jq '"\(.status) \(.conclusion // "-")"'); then
+      read -r status conclusion <<<"$line"
+      break
+    fi
+    sleep 5
+  done
   [[ "$status" == completed ]] && break
   if (( $(date +%s) >= deadline )); then
     conclusion="unknown"
@@ -54,7 +62,7 @@ while :; do
 done
 
 failed_jobs=$(gh api "repos/$repo/actions/runs/$run_id/jobs" --paginate \
-  --jq '.jobs[] | select(.conclusion == "failure") | .name')
+  --jq '.jobs[] | select(.conclusion == "failure") | .name' || true)
 
 case "$conclusion" in
   success) result="success" ;;
@@ -64,7 +72,7 @@ case "$conclusion" in
 esac
 
 {
-  echo "### gpu-box-app: $ACTION ${VERSION:-$OP}"
+  echo "### gpu-box-app: $ACTION $VERSION"
   echo
   echo "- run: $url"
   echo "- result: $result"
@@ -72,6 +80,6 @@ esac
 } >> "$GITHUB_STEP_SUMMARY"
 
 if [[ "$conclusion" != success ]]; then
-  echo "::error::gpu-box-app $ACTION ${VERSION:-$OP}: $result ($url)"
+  echo "::error::gpu-box-app $ACTION $VERSION: $result ($url)"
   exit 1
 fi
