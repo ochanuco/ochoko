@@ -25,8 +25,10 @@ process. The A.I.VOICE API DLL is not referenced (it cannot be committed);
 ## MCP
 
 `POST /mcp` speaks MCP Streamable HTTP in stateless JSON mode (protocol
-versions `2025-06-18` and `2025-03-26`). There are no sessions, no batches,
-and no SSE: `GET /mcp` and `DELETE /mcp` return 405.
+version `2025-06-18` only). There are no sessions, no batches, and no SSE:
+`GET /mcp` and `DELETE /mcp` return 405. A request other than `initialize`
+whose `MCP-Protocol-Version` header is present and not `2025-06-18` gets 400;
+an absent header is treated as `2025-06-18`.
 
 Every request needs `Authorization: Bearer <token>`. The token maps to a
 caller name (`dev`, `prod`, ...), which also keys the keep-awake lease. A
@@ -43,21 +45,30 @@ request that carries an `Origin` header is rejected with 403.
 
 Unknown keys and wrong types are rejected with JSON-RPC error -32602.
 
-Result: `content: [{type: "audio", data: <base64 WAV>, mimeType: "audio/wav"}]`
+Result: `content: [{type: "audio", data: <base64 WAV>, mimeType: "audio/wav"}, {type: "text", text: <structuredContent as JSON>}]`
 and `structuredContent: {duration_ms, bytes}`.
 
 One operation runs at a time. A call that cannot get the engine in time
 returns a tool error `busy`; a call that takes longer than the per-call
-timeout (60 s) returns a tool error and `/healthz` reports the engine as
-`unhealthy` until the next call succeeds.
+timeout (45 s, after at most 5 s waiting for the engine, so a call finishes
+within 50 s) returns a tool error and `/healthz` reports the engine as
+`unhealthy`. While the timed-out operation is still running, later calls fail
+immediately. If it is still stuck 20 s after the timeout, ochoko exits with
+code 3 so the scheduled task can restart it. `unhealthy` otherwise lasts until
+the engine is connected again by the next warm-up (every 30 s) or call.
 
-Each call works on a dedicated preset named `ochoko:<preset>`, copied from the
-base preset with the overrides applied, and sets `MasterControl` to the
-baseline captured at the first connect merged with `master_overrides`.
+Each call adds (or updates) a working preset named `ochoko:<preset>` in the
+Editor's preset list, copied from the base preset with the overrides applied,
+and selects it. The user's preset is never modified. `MasterControl` is set to
+the baseline merged with `master_overrides` for the call and written back to
+the baseline afterwards. The baseline is read from the Editor once and saved
+to `master-baseline.json` in the data directory; later starts load that file.
+Delete the file to capture the Editor's current `MasterControl` again.
 
 ### `list_presets`
 
-No input. Result: `{presets: [{name, preset: <raw preset JSON>}], master_control: <raw baseline JSON>}`.
+No input. Result: `{presets: [{name, preset: <raw preset JSON>}], master_control: <raw baseline JSON>}`
+(`master_control` is the baseline, not the Editor's current value).
 `ochoko:` working presets are excluded.
 
 ### `keep_awake`
@@ -76,7 +87,10 @@ assembly version.
 ## Configuration
 
 Settings and secrets live in `C:\ProgramData\ochoko\`; persistent data lives in
-`C:\apps\ochoko\data\` (logs in `logs\`, temporary WAV files in `tmp\`).
+`C:\apps\ochoko\data\` (logs in `logs\`, temporary WAV files in `tmp\`,
+`master-baseline.json`). Failures before the logger exists (for example an
+unreadable `config.json`) are written to `C:\apps\ochoko\data\logs`, or
+`%TEMP%\ochoko` if that is not writable, and the process exits with code 2.
 Logs record the length of the text, never its content.
 
 `tokens.json` (required) maps a caller name to its token. Use a different token
@@ -88,13 +102,16 @@ for each Gateway:
 
 `config.json` (optional) overrides defaults: `port` (8190), `progId`
 (`AI.Talk.Editor.Api.TtsControl`), `hostName` (first of
-`GetAvailableHostNames()`), `operationTimeoutSeconds` (60), `busyWaitSeconds`
-(5), `warmupTimeoutSeconds` (180), `dataDir`.
+`GetAvailableHostNames()`), `operationTimeoutSeconds` (45), `busyWaitSeconds`
+(5), `warmupTimeoutSeconds` (180), `dataDir`. Keep `busyWaitSeconds` plus
+`operationTimeoutSeconds` under 55 s, below the MCP client's default 60 s
+request timeout.
 
 ## Registering on the GPU box
 
 Run once, by hand, in an elevated PowerShell on the GPU box as the user that
-runs A.I.VOICE (`C:\apps` must already exist from chabatake's `deploy.ps1`):
+runs A.I.VOICE (`C:\apps` must already exist from chabatake's `deploy.ps1`; the script
+stops if it does not):
 
 ```powershell
 .\register.ps1            # or: .\register.ps1 -UserSid S-1-5-21-...
@@ -117,12 +134,16 @@ A push to `main` runs `.github/workflows/deploy.yml`:
    publishes an immutable GitHub Release `r<run_number>-<sha7>`.
 3. It dispatches chabatake's `gpu-box-app` workflow (`app=ochoko`) with a
    GitHub App token and waits for it to succeed. chabatake unpacks the Release
-   to `C:\apps\ochoko\releases\<version>`, switches the `current` junction,
-   starts the task, and runs `deploy/check.ps1` (polls `/healthz`).
+   to `C:\apps\ochoko\releases\<version>`, runs the old version's
+   `deploy/stop.ps1` (stops the task and any remaining `ochoko.exe`), switches
+   the `current` junction, starts the task, and runs `deploy/check.ps1`
+   (polls `/healthz`).
 4. Releases older than the newest 3 are deleted with their tags.
 
 `workflow_dispatch` with `ref` redeploys a commit on `main`, which is how a
 rollback is done.
+
+The yunomi Gateway's `AIVOICE_URL` is `http://<box>:8190/mcp`.
 
 ## Verifying preset field names
 
@@ -132,7 +153,7 @@ by calling `list_presets` and comparing the raw JSON with the keys listed in
 `src/Ochoko.Core/ParamKeys.cs`. If a name differs, fix it in that one file.
 
 ```sh
-curl -s http://192.168.10.254:8190/mcp \
+curl -s http://<box>:8190/mcp \
   -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
   -H 'Accept: application/json, text/event-stream' \
   -d '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"list_presets","arguments":{}}}'
