@@ -188,7 +188,7 @@ public sealed class HttpHost
         else
         {
             var bytes = new UTF8Encoding(false).GetBytes(body);
-            response.ContentType = "application/json";
+            response.ContentType = "application/json; charset=utf-8";
             response.ContentLength64 = bytes.Length;
             await response.OutputStream.WriteAsync(bytes, 0, bytes.Length).ConfigureAwait(false);
         }
