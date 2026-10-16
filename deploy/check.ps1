@@ -1,5 +1,5 @@
 ﻿# 配備した版が応答するまで /healthz を待つ。A.I.VOICE への接続(engine)は問わない。
-# chabatake の gpu-box-app が、タスクを起こした後に実行する。
+# 配備ワークフローが、タスクを起こした後に実行する。
 $ErrorActionPreference = "Stop"
 $ProgressPreference = "SilentlyContinue"
 

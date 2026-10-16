@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Dispatch gpu-box-app.yml on ochanuco/chabatake for app ochoko, wait for the
-# run and exit 0 only when it concluded success.
+# Dispatch the deployer workflow for app ochoko, wait for the run and exit 0
+# only when it concluded success.
 set -euo pipefail
 
 repo=ochanuco/chabatake
@@ -39,7 +39,7 @@ if [[ -z "$run_id" ]]; then
 fi
 
 url="https://github.com/$repo/actions/runs/$run_id"
-echo "chabatake run: $url"
+echo "deployer run: $url"
 
 deadline=$(( $(date +%s) + WAIT_MINUTES * 60 ))
 while :; do

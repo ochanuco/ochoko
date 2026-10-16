@@ -1,9 +1,9 @@
 name: gpu-box app
-description: Call chabatake's gpu-box-app workflow for ochoko and wait for its result.
+description: Call the GPU box deployer workflow for ochoko and wait for its result.
 
 inputs:
   action:
-    description: chabatake gpu-box-app action (deploy or restart)
+    description: deployer action (deploy or restart)
     required: true
   version:
     description: release tag to deploy (action deploy)
@@ -12,7 +12,7 @@ inputs:
     description: 1Password service account that reads gh-deploy/gpu-box-dispatch
     required: true
   wait-minutes:
-    description: how long to wait for the chabatake run, queueing included
+    description: how long to wait for the deployer run, queueing included
     default: "230"
 
 runs:
