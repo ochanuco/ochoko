@@ -10,14 +10,14 @@ public interface IPowerRequest
     void Release();
 }
 
-/// <summary>呼び出し元ごとの keep-awake リース。ひとつでも有効な間だけ電源要求を保持する。</summary>
+/// <summary>呼び出し元とキャラクターの組ごとの keep-awake リース。ひとつでも有効な間だけ電源要求を保持する。</summary>
 public sealed class KeepAwakeManager
 {
     private readonly IClock _clock;
     private readonly IPowerRequest _power;
     private readonly ILog _log;
     private readonly object _gate = new object();
-    private readonly Dictionary<string, DateTimeOffset> _leases = new Dictionary<string, DateTimeOffset>();
+    private readonly Dictionary<(string Caller, string PartnerId), DateTimeOffset> _leases = new Dictionary<(string Caller, string PartnerId), DateTimeOffset>();
     private bool _held;
 
     public KeepAwakeManager(IClock clock, IPowerRequest power, ILog log)
@@ -27,13 +27,13 @@ public sealed class KeepAwakeManager
         _log = log;
     }
 
-    /// <summary>同じ呼び出し元のリースは置き換える。失効時刻を返す。</summary>
-    public DateTimeOffset Lease(string caller, int ttlSeconds)
+    /// <summary>同じ呼び出し元とキャラクターのリースは置き換え、他のキャラクターのリースには触れない。失効時刻を返す。</summary>
+    public DateTimeOffset Lease(string caller, string partnerId, int ttlSeconds)
     {
         lock (_gate)
         {
             var expires = _clock.UtcNow.AddSeconds(ttlSeconds);
-            _leases[caller] = expires;
+            _leases[(caller, partnerId)] = expires;
             Apply();
             return expires;
         }
@@ -63,9 +63,9 @@ public sealed class KeepAwakeManager
     private void Apply()
     {
         var now = _clock.UtcNow;
-        foreach (var caller in _leases.Where(kv => kv.Value <= now).Select(kv => kv.Key).ToList())
+        foreach (var key in _leases.Where(kv => kv.Value <= now).Select(kv => kv.Key).ToList())
         {
-            _leases.Remove(caller);
+            _leases.Remove(key);
         }
 
         var wanted = _leases.Count > 0;

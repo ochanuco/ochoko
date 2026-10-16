@@ -31,7 +31,8 @@ whose `MCP-Protocol-Version` header is present and not `2025-06-18` gets 400;
 an absent header is treated as `2025-06-18`.
 
 Every request needs `Authorization: Bearer <token>`. The token maps to a
-caller name (`dev`, `prod`, ...), which also keys the keep-awake lease. A
+caller name (`dev`, `prod`, ...), which together with `partner_id` keys the
+keep-awake lease. A
 request that carries an `Origin` header is rejected with 403.
 
 ### `synthesize`
@@ -73,10 +74,16 @@ No input. Result: `{presets: [{name, preset: <raw preset JSON>}], master_control
 
 ### `keep_awake`
 
-Input `{ttl_seconds: integer 1..900}`. Result `{caller, expires_at}` (UTC
-ISO 8601). The process holds a `PowerRequestSystemRequired` request while any
-lease is unexpired and clears it when none remain. Calling again as the same
-caller replaces that caller's lease.
+Input `{ttl_seconds: integer 1..900, partner_id: string 1..64 characters}`.
+Both are required; `partner_id` is the character the lease belongs to and has
+no default. A missing, empty (after trimming), non-string, or over-long
+`partner_id` is rejected with `-32602`, so a caller that forgets it cannot
+silently share a lease with others.
+Result `{caller, partner_id, expires_at}` (UTC ISO 8601). Leases are keyed by
+caller and `partner_id`. The process holds a `PowerRequestSystemRequired`
+request while any lease is unexpired and clears it when none remain. Calling
+again with the same caller and `partner_id` replaces that lease; leases of
+other partners are untouched.
 
 ### `GET /healthz`
 

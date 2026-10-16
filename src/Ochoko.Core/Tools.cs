@@ -19,6 +19,7 @@ public static class Tools
 
     public const int MaxTextLength = 2000;
     public const int MaxTtlSeconds = 900;
+    public const int MaxPartnerIdLength = 64;
 
     public static JsonArray List()
     {
@@ -61,19 +62,21 @@ public static class Tools
             {
                 ["name"] = KeepAwake,
                 ["title"] = "Keep the machine awake",
-                ["description"] = "Hold a power request so the machine does not sleep until the lease expires. Calling again as the same caller replaces the lease.",
+                ["description"] = "Hold a power request so the machine does not sleep until the lease expires. Calling again with the same caller and partner_id replaces that lease; leases of other partners are untouched.",
                 ["inputSchema"] = new JsonObject
                 {
                     ["type"] = "object",
                     ["properties"] = new JsonObject
                     {
                         ["ttl_seconds"] = new JsonObject { ["type"] = "integer", ["minimum"] = 1, ["maximum"] = MaxTtlSeconds },
+                        ["partner_id"] = new JsonObject { ["type"] = "string", ["minLength"] = 1, ["maxLength"] = MaxPartnerIdLength },
                     },
-                    ["required"] = new JsonArray("ttl_seconds"),
+                    ["required"] = new JsonArray("ttl_seconds", "partner_id"),
                     ["additionalProperties"] = false,
                 },
                 ["outputSchema"] = Schema(
                     ("caller", new JsonObject { ["type"] = "string" }),
+                    ("partner_id", new JsonObject { ["type"] = "string" }),
                     ("expires_at", new JsonObject { ["type"] = "string", ["format"] = "date-time" })),
             },
         };
@@ -198,10 +201,10 @@ public static class Tools
         return new SynthesisRequest(text, preset, presetNumbers, styles, master);
     }
 
-    public static int ParseKeepAwake(JsonElement? arguments)
+    public static (string PartnerId, int TtlSeconds) ParseKeepAwake(JsonElement? arguments)
     {
         var args = RequireObject(arguments, "arguments");
-        RejectUnknown(args, "arguments", "ttl_seconds");
+        RejectUnknown(args, "arguments", "ttl_seconds", "partner_id");
         if (!args.TryGetProperty("ttl_seconds", out var v) || v.ValueKind != JsonValueKind.Number || !v.TryGetInt32(out var ttl))
         {
             throw new InvalidParamsException("ttl_seconds must be an integer");
@@ -212,7 +215,19 @@ public static class Tools
             throw new InvalidParamsException("ttl_seconds must be 1.." + MaxTtlSeconds);
         }
 
-        return ttl;
+        if (!args.TryGetProperty("partner_id", out var p) || p.ValueKind != JsonValueKind.String)
+        {
+            throw new InvalidParamsException("partner_id must be a string");
+        }
+
+        var raw = p.GetString()!;
+        var partnerId = raw.Trim();
+        if (partnerId.Length == 0 || raw.Length > MaxPartnerIdLength)
+        {
+            throw new InvalidParamsException("partner_id must be 1.." + MaxPartnerIdLength + " characters");
+        }
+
+        return (partnerId, ttl);
     }
 
     public static void RequireNoArguments(JsonElement? arguments)

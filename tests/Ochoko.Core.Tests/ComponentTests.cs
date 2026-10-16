@@ -15,8 +15,8 @@ public class KeepAwakeTests
     public void Holds_until_the_last_lease_expires()
     {
         var m = Make();
-        m.Lease("dev", 30);
-        m.Lease("prod", 60);
+        m.Lease("dev", "a", 30);
+        m.Lease("prod", "a", 60);
         Assert.True(_power.Held);
 
         _clock.Advance(TimeSpan.FromSeconds(30));
@@ -34,8 +34,8 @@ public class KeepAwakeTests
     public void Same_caller_replaces_its_lease()
     {
         var m = Make();
-        m.Lease("dev", 10);
-        var expires = m.Lease("dev", 100);
+        m.Lease("dev", "a", 10);
+        var expires = m.Lease("dev", "a", 100);
         Assert.Equal(_clock.UtcNow.AddSeconds(100), expires);
 
         _clock.Advance(TimeSpan.FromSeconds(50));
@@ -43,10 +43,43 @@ public class KeepAwakeTests
         Assert.True(_power.Held);
         Assert.Equal(1, _power.Acquires);
 
-        m.Lease("dev", 5);
+        m.Lease("dev", "a", 5);
         _clock.Advance(TimeSpan.FromSeconds(5));
         m.Refresh();
         Assert.False(_power.Held);
+    }
+
+    [Fact]
+    public void Partners_under_one_caller_keep_independent_leases()
+    {
+        var m = Make();
+        m.Lease("dev", "a", 100);
+        m.Lease("dev", "b", 10);
+        Assert.Equal(2, m.ActiveCount);
+
+        _clock.Advance(TimeSpan.FromSeconds(10));
+        m.Refresh();
+        Assert.True(_power.Held);
+        Assert.Equal(1, m.ActiveCount);
+
+        _clock.Advance(TimeSpan.FromSeconds(90));
+        m.Refresh();
+        Assert.False(_power.Held);
+        Assert.Equal(0, m.ActiveCount);
+    }
+
+    [Fact]
+    public void Same_partner_under_different_callers_is_independent()
+    {
+        var m = Make();
+        m.Lease("dev", "a", 10);
+        m.Lease("prod", "a", 100);
+        Assert.Equal(2, m.ActiveCount);
+
+        _clock.Advance(TimeSpan.FromSeconds(10));
+        m.Refresh();
+        Assert.True(_power.Held);
+        Assert.Equal(1, m.ActiveCount);
     }
 }
 
