@@ -97,8 +97,7 @@ assembly version.
 - [docs/setup.md](docs/setup.md): install, configure, and verify ochoko on a
   Windows machine by hand.
 - [docs/deployment.md](docs/deployment.md): the GitHub Actions pipeline that
-  publishes Releases and hands them to an external deployer, and what a fork
-  must set up to use it.
+  publishes Releases, and what a deployer must do to install them.
 
 ## Development
 

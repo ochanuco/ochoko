@@ -1,14 +1,15 @@
-﻿# ochoko を GPU 機に初めて入れるときに、管理者権限で一度だけ手で実行する。何度実行しても同じ状態になる。
+﻿# ochoko を Windows ホストに初めて入れるときに、管理者権限で一度だけ手で実行する。何度実行しても同じ状態になる。
 #   - C:\apps\ochoko\{releases,data} と C:\ProgramData\ochoko を作り、権限を付ける
 #   - ログオン時に実行ユーザーの非昇格で動くタスク ochoko を登録する
-#   - Gateway(既定 192.168.50.10)から TCP 8190 への受信を許す
+#   - Gateway から TCP 8190 への受信を許す
 #   - http://+:8190/ の URL ACL を実行ユーザーに与える
 # アカウントは名前の解決が ssh 越しに失敗するので、SID で扱う。
 param(
     # ochoko を動かすユーザーの SID。省略すると、このスクリプトを実行しているユーザー
     [string]$UserSid = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value,
     # TCP 8190 への受信を許すアドレス。カンマ区切りで複数、または CIDR も書ける
-    [string[]]$Gateway = @("192.168.50.10")
+    [Parameter(Mandatory)]
+    [string[]]$Gateway
 )
 $ErrorActionPreference = "Stop"
 
@@ -37,9 +38,9 @@ function Invoke-Native([scriptblock]$Command, [string]$What, [switch]$AllowFailu
     if ($code -ne 0 -and -not $AllowFailure) { throw "$What に失敗した（終了コード $code）" }
 }
 
-# C:\apps は GPU 機の初期セットアップが作り、実行ユーザーに変更を許している。releases と data はそこから継承する
+# C:\apps は事前に作り、実行ユーザーに変更を許しておく(docs/setup.md)。releases と data はそこから継承する
 if (-not (Test-Path -LiteralPath (Split-Path $AppRoot) -PathType Container)) {
-    throw "$(Split-Path $AppRoot) がない。先に GPU 機の初期セットアップを済ませる"
+    throw "$(Split-Path $AppRoot) がない。先に作って実行ユーザーに変更を許す(docs/setup.md)"
 }
 New-Item -ItemType Directory -Force -Path "$AppRoot\releases", "$AppRoot\data" | Out-Null
 
@@ -71,5 +72,5 @@ Invoke-Native { netsh http add urlacl url=$url "sddl=D:(A;;GX;;;$UserSid)" } "UR
 
 Get-ScheduledTask -TaskName $App | Select-Object TaskName, State
 if (-not (Test-Path -LiteralPath (Join-Path $Config "tokens.json"))) {
-    Write-Host "次に $Config\tokens.json を置く（{`"dev`": `"<token>`", `"prod`": `"<token>`"}）。Gateway の dev と prod で別のトークンにする"
+    Write-Host "次に $Config\tokens.json を置く（{`"dev`": `"<token>`", `"prod`": `"<token>`"}）。呼び出し元ごとに別のトークンにする"
 }
