@@ -89,7 +89,8 @@ public static class Tools
         foreach (var (name, schema) in props)
         {
             properties[name] = schema;
-            required.Add(name);
+            // Add(string) は Add<T> に解決され、System.Text.Json 8 では TypeInfoResolver のない options で書けない値になる
+            required.Add(JsonValue.Create(name));
         }
 
         return new JsonObject { ["type"] = "object", ["properties"] = properties, ["required"] = required };
