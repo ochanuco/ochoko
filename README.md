@@ -1,20 +1,21 @@
 # ochoko
 
-A thin Voice MCP server for [A.I.VOICE](https://aivoice.jp/), used by yunomi.
+A thin Voice MCP server for [A.I.VOICE](https://aivoice.jp/).
 It receives text plus raw A.I.VOICE values and returns a WAV. It has no
-character logic and no prosody IR; yunomi converts semantic prosody into
-A.I.VOICE values before calling.
+character logic and no prosody IR; the caller converts semantic prosody into
+A.I.VOICE values before calling. It was written as the A.I.VOICE backend for
+[yunomi](https://github.com/ochanuco/yunomi).
 
-It runs on the GPU box (Windows 11) as a logon scheduled task of the
-interactive user, in the same non-elevated session as the A.I.VOICE Editor
-GUI, and serves `http://+:8190/`. The caller is the yunomi Gateway on docker01
-(192.168.50.10).
+It runs on a Windows machine with A.I.VOICE Editor as a logon scheduled task
+of the interactive user, in the same non-elevated session as the Editor GUI,
+and serves `http://+:8190/`. The firewall rule admits only the gateway
+addresses given at registration.
 
 ```text
 src/Ochoko.Core          MCP JSON-RPC, tool validation, Bearer auth, keep-awake leases, WAV parsing, IVoiceEngine
 src/Ochoko               ochoko.exe (net48, x64): HttpListener host, A.I.VOICE engine over COM, power request, logging
 tests/Ochoko.Core.Tests  xunit tests for Ochoko.Core
-deploy/                  hooks run by chabatake's deployer, and register.ps1
+deploy/                  hooks run by the deployer, and register.ps1
 ```
 
 The exe targets .NET Framework 4.8 because A.I.VOICE's COM server is an
@@ -91,80 +92,13 @@ No auth. `200 {"status":"ok","version":"...","engine":"ready|starting|unavailabl
 `version` comes from `release.json` beside the exe, falling back to the
 assembly version.
 
-## Configuration
+## Running it
 
-Settings and secrets live in `C:\ProgramData\ochoko\`; persistent data lives in
-`C:\apps\ochoko\data\` (logs in `logs\`, temporary WAV files in `tmp\`,
-`master-baseline.json`). Failures before the logger exists (for example an
-unreadable `config.json`) are written to `C:\apps\ochoko\data\logs`, or
-`%TEMP%\ochoko` if that is not writable, and the process exits with code 2.
-Logs record the length of the text, never its content.
-
-`tokens.json` (required) maps a caller name to its token. Use a different token
-for each Gateway:
-
-```json
-{ "dev": "<token>", "prod": "<token>" }
-```
-
-`config.json` (optional) overrides defaults: `port` (8190), `progId`
-(`AI.Talk.Editor.Api.TtsControl`), `hostName` (first of
-`GetAvailableHostNames()`), `operationTimeoutSeconds` (45), `busyWaitSeconds`
-(5), `warmupTimeoutSeconds` (180), `dataDir`. Keep `busyWaitSeconds` plus
-`operationTimeoutSeconds` under 55 s, below the MCP client's default 60 s
-request timeout.
-
-## Registering on the GPU box
-
-Run once, by hand, in an elevated PowerShell on the GPU box as the user that
-runs A.I.VOICE (`C:\apps` must already exist from chabatake's `deploy.ps1`; the script
-stops if it does not):
-
-```powershell
-.\register.ps1            # or: .\register.ps1 -UserSid S-1-5-21-...
-```
-
-It is idempotent. It creates `C:\apps\ochoko\{releases,data}` and
-`C:\ProgramData\ochoko`, registers the logon task `ochoko` (non-elevated,
-interactive, restarted on failure), opens inbound TCP 8190 from 192.168.50.10,
-and grants the URL ACL for `http://+:8190/`. Then put `tokens.json` in
-`C:\ProgramData\ochoko`. After the first deploy the script is available at
-`C:\apps\ochoko\current\deploy\register.ps1`.
-
-## Deploys
-
-A push to `main` runs `.github/workflows/deploy.yml`:
-
-1. `build` tests, publishes, and zips `ochoko-win-x64.zip` (exe, dependencies,
-   `deploy/`, `release.json`).
-2. `deploy` waits for approval in the `production` Environment, then
-   publishes an immutable GitHub Release `r<run_number>-<sha7>`.
-3. It dispatches chabatake's `gpu-box-app` workflow (`app=ochoko`) with a
-   GitHub App token and waits for it to succeed. chabatake unpacks the Release
-   to `C:\apps\ochoko\releases\<version>`, runs the old version's
-   `deploy/stop.ps1` (stops the task and any remaining `ochoko.exe`), switches
-   the `current` junction, starts the task, and runs `deploy/check.ps1`
-   (polls `/healthz`).
-4. Releases older than the newest 3 are deleted with their tags.
-
-`workflow_dispatch` with `ref` redeploys a commit on `main`, which is how a
-rollback is done.
-
-The yunomi Gateway's `AIVOICE_URL` is `http://<box>:8190/mcp`.
-
-## Verifying preset field names
-
-The parameter names come from the official API reference
-(https://aivoice.jp/manual/editor/api.html). Confirm them on the real machine
-by calling `list_presets` and comparing the raw JSON with the keys listed in
-`src/Ochoko.Core/ParamKeys.cs`. If a name differs, fix it in that one file.
-
-```sh
-curl -s http://<box>:8190/mcp \
-  -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
-  -H 'Accept: application/json, text/event-stream' \
-  -d '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"list_presets","arguments":{}}}'
-```
+- [docs/setup.md](docs/setup.md): install, configure, and verify ochoko on a
+  Windows machine by hand.
+- [docs/deployment.md](docs/deployment.md): the GitHub Actions pipeline that
+  publishes Releases and hands them to an external deployer, and what a fork
+  must set up to use it.
 
 ## Development
 
@@ -177,6 +111,6 @@ dotnet test
 `Microsoft.NETFramework.ReferenceAssemblies`, but it only runs on Windows with
 A.I.VOICE Editor installed.
 
-## No licence
+## License
 
-Like its sibling repositories, ochoko ships without a licence.
+[MIT](LICENSE)

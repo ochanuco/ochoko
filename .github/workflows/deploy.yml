@@ -3,7 +3,7 @@ run-name: deploy ochoko @ ${{ inputs.ref || github.sha }}
 
 # 本番(GPU 機)へのデプロイ。main への push で出し、承認は Environment production で止める。
 # workflow_dispatch はロールバックと出し直し用。zip を Release として公開し、
-# GPU 機への配備は chabatake の gpu-box-app に任せる。
+# GPU 機への配備は外部の配備ワークフローに任せる。
 on:
   push:
     branches: [main]
@@ -82,7 +82,7 @@ jobs:
           if-no-files-found: error
 
   deploy:
-    name: publish the release and deploy it through chabatake
+    name: publish the release and deploy it to the GPU box
     needs: build
     runs-on: ubuntu-latest
     environment: production
@@ -110,6 +110,7 @@ jobs:
 
       - uses: ./.github/actions/gpu-box-app
         with:
+          deployer-repo: ${{ secrets.DEPLOYER_REPO }}
           action: deploy
           version: ${{ steps.release.outputs.version }}
           op-service-account-token: ${{ secrets.OP_SA_DEPLOY }}

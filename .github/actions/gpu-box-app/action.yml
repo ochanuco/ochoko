@@ -1,9 +1,12 @@
 name: gpu-box app
-description: Call chabatake's gpu-box-app workflow for ochoko and wait for its result.
+description: Call the GPU box deployer workflow for ochoko and wait for its result.
 
 inputs:
+  deployer-repo:
+    description: owner/name of the repository that holds the deployer workflow
+    required: true
   action:
-    description: chabatake gpu-box-app action (deploy or restart)
+    description: deployer action (deploy or restart)
     required: true
   version:
     description: release tag to deploy (action deploy)
@@ -12,12 +15,24 @@ inputs:
     description: 1Password service account that reads gh-deploy/gpu-box-dispatch
     required: true
   wait-minutes:
-    description: how long to wait for the chabatake run, queueing included
+    description: how long to wait for the deployer run, queueing included
     default: "230"
 
 runs:
   using: composite
   steps:
+    - id: repo
+      shell: bash
+      env:
+        DEPLOYER_REPO: ${{ inputs.deployer-repo }}
+      run: |
+        if [[ ! "$DEPLOYER_REPO" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]]; then
+          echo "::error::deployer-repo must be owner/name, got '$DEPLOYER_REPO' (set the DEPLOYER_REPO secret)"
+          exit 1
+        fi
+        echo "owner=${DEPLOYER_REPO%%/*}" >> "$GITHUB_OUTPUT"
+        echo "name=${DEPLOYER_REPO#*/}" >> "$GITHUB_OUTPUT"
+
     - id: app
       uses: 1password/load-secrets-action@70062d7a876d3eb6334754fa26efd2fbd90c32f2 # v5.0.1
       env:
@@ -30,13 +45,14 @@ runs:
       with:
         client-id: ${{ steps.app.outputs.CLIENT_ID }}
         private-key: ${{ steps.app.outputs.PRIVATE_KEY }}
-        owner: ochanuco
-        repositories: chabatake
+        owner: ${{ steps.repo.outputs.owner }}
+        repositories: ${{ steps.repo.outputs.name }}
         permission-actions: write
 
     - shell: bash
       env:
         GH_TOKEN: ${{ steps.token.outputs.token }}
+        DEPLOYER_REPO: ${{ inputs.deployer-repo }}
         ACTION: ${{ inputs.action }}
         VERSION: ${{ inputs.version }}
         WAIT_MINUTES: ${{ inputs.wait-minutes }}
