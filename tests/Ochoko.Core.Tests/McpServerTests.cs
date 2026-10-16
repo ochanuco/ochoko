@@ -13,12 +13,13 @@ public class McpServerTests
     private readonly FakeEngine _engine = new FakeEngine();
     private readonly FakeClock _clock = new FakeClock();
     private readonly FakePower _power = new FakePower();
+    private readonly KeepAwakeManager _keep;
     private readonly McpServer _server;
 
     public McpServerTests()
     {
-        var keep = new KeepAwakeManager(_clock, _power, NullLog.Instance);
-        _server = new McpServer(_engine, keep, "test", NullLog.Instance);
+        _keep = new KeepAwakeManager(_clock, _power, NullLog.Instance);
+        _server = new McpServer(_engine, _keep, "test", NullLog.Instance);
     }
 
     private async Task<(int Status, JsonNode? Body)> Post(string body, string caller = "dev")
@@ -121,6 +122,20 @@ public class McpServerTests
     }
 
     [Fact]
+    public async Task Tools_list_keep_awake_requires_partner_id()
+    {
+        var (_, body) = await Post("{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/list\"}");
+        var tool = body!["result"]!["tools"]!.AsArray().Single(t => (string)t!["name"]! == "keep_awake")!;
+        var input = tool["inputSchema"]!;
+        Assert.Equal(new[] { "ttl_seconds", "partner_id" }, input["required"]!.AsArray().Select(n => (string)n!).ToArray());
+        Assert.Equal("string", (string)input["properties"]!["partner_id"]!["type"]!);
+        Assert.Equal(1, (int)input["properties"]!["partner_id"]!["minLength"]!);
+        Assert.Equal(64, (int)input["properties"]!["partner_id"]!["maxLength"]!);
+        Assert.False((bool)input["additionalProperties"]!);
+        Assert.Equal(new[] { "caller", "partner_id", "expires_at" }, tool["outputSchema"]!["required"]!.AsArray().Select(n => (string)n!).ToArray());
+    }
+
+    [Fact]
     public async Task Synthesize_returns_audio_and_structured_content()
     {
         var (_, body) = await Call("synthesize",
@@ -207,22 +222,63 @@ public class McpServerTests
     }
 
     [Fact]
-    public async Task Keep_awake_leases_per_caller_and_expires()
+    public async Task Keep_awake_leases_per_caller_and_partner()
     {
-        var (_, body) = await Post("{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/call\",\"params\":{\"name\":\"keep_awake\",\"arguments\":{\"ttl_seconds\":60}}}", "prod");
+        var (_, body) = await Post("{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/call\",\"params\":{\"name\":\"keep_awake\",\"arguments\":{\"ttl_seconds\":60,\"partner_id\":\"a\"}}}", "prod");
         var sc = body!["result"]!["structuredContent"]!;
         Assert.Equal("prod", (string)sc["caller"]!);
+        Assert.Equal("a", (string)sc["partner_id"]!);
+        Assert.Equal(sc.ToJsonString(), JsonNode.Parse((string)body["result"]!["content"]![0]!["text"]!)!.ToJsonString());
         Assert.Equal("2026-01-01T00:01:00Z", (string)sc["expires_at"]!);
         Assert.True(_power.Held);
     }
 
+    [Fact]
+    public async Task Keep_awake_partners_hold_power_until_the_last_expires()
+    {
+        await Call("keep_awake", "{\"ttl_seconds\":100,\"partner_id\":\"a\"}");
+        await Call("keep_awake", "{\"ttl_seconds\":10,\"partner_id\":\"b\"}");
+        _clock.Advance(TimeSpan.FromSeconds(10));
+        _keep.Refresh();
+        Assert.True(_power.Held);
+        Assert.Equal(1, _keep.ActiveCount);
+
+        await Call("keep_awake", "{\"ttl_seconds\":5,\"partner_id\":\"a\"}");
+        _clock.Advance(TimeSpan.FromSeconds(5));
+        _keep.Refresh();
+        Assert.False(_power.Held);
+    }
+
+    [Fact]
+    public async Task Keep_awake_same_partner_id_under_different_callers_is_independent()
+    {
+        const string args = "{\"ttl_seconds\":10,\"partner_id\":\"a\"}";
+        await Call("keep_awake", args);
+        await Post("{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/call\",\"params\":{\"name\":\"keep_awake\",\"arguments\":{\"ttl_seconds\":100,\"partner_id\":\"a\"}}}", "prod");
+        Assert.Equal(2, _keep.ActiveCount);
+    }
+
+    [Fact]
+    public async Task Keep_awake_trims_partner_id()
+    {
+        var (_, body) = await Call("keep_awake", "{\"ttl_seconds\":10,\"partner_id\":\"  a \"}");
+        Assert.Equal("a", (string)body!["result"]!["structuredContent"]!["partner_id"]!);
+    }
+
     [Theory]
-    [InlineData("{\"ttl_seconds\":0}")]
-    [InlineData("{\"ttl_seconds\":901}")]
-    [InlineData("{\"ttl_seconds\":1.5}")]
-    [InlineData("{\"ttl_seconds\":\"5\"}")]
+    [InlineData("{\"ttl_seconds\":0,\"partner_id\":\"a\"}")]
+    [InlineData("{\"ttl_seconds\":901,\"partner_id\":\"a\"}")]
+    [InlineData("{\"ttl_seconds\":1.5,\"partner_id\":\"a\"}")]
+    [InlineData("{\"ttl_seconds\":\"5\",\"partner_id\":\"a\"}")]
+    [InlineData("{\"partner_id\":\"a\"}")]
+    [InlineData("{\"ttl_seconds\":10}")]
+    [InlineData("{\"ttl_seconds\":10,\"partner_id\":\"\"}")]
+    [InlineData("{\"ttl_seconds\":10,\"partner_id\":\"   \"}")]
+    [InlineData("{\"ttl_seconds\":10,\"partner_id\":null}")]
+    [InlineData("{\"ttl_seconds\":10,\"partner_id\":1}")]
+    [InlineData("{\"ttl_seconds\":10,\"partner_id\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"}")]
     [InlineData("{}")]
-    public async Task Keep_awake_rejects_bad_ttl(string args)
+    public async Task Keep_awake_rejects_bad_arguments(string args)
     {
         var (_, body) = await Call("keep_awake", args);
         Assert.Equal(-32602, (int)body!["error"]!["code"]!);

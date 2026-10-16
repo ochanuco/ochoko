@@ -234,13 +234,14 @@ public sealed class McpServer
         return Structured(new JsonObject { ["presets"] = presets, ["master_control"] = listing.MasterControl?.DeepClone() });
     }
 
-    private JsonObject KeepAwake(int ttl, string caller, Stopwatch sw)
+    private JsonObject KeepAwake((string PartnerId, int TtlSeconds) request, string caller, Stopwatch sw)
     {
-        var expires = _keepAwake.Lease(caller, ttl);
-        _log.Info($"caller={caller} tool=keep_awake ttl_seconds={ttl} ms={sw.ElapsedMilliseconds}");
+        var expires = _keepAwake.Lease(caller, request.PartnerId, request.TtlSeconds);
+        _log.Info($"caller={caller} tool=keep_awake partner_id={request.PartnerId} ttl_seconds={request.TtlSeconds} ms={sw.ElapsedMilliseconds}");
         return Structured(new JsonObject
         {
             ["caller"] = caller,
+            ["partner_id"] = request.PartnerId,
             ["expires_at"] = expires.UtcDateTime.ToString("yyyy-MM-dd'T'HH:mm:ss'Z'", CultureInfo.InvariantCulture),
         });
     }
