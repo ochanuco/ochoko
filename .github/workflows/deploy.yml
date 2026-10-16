@@ -110,6 +110,7 @@ jobs:
 
       - uses: ./.github/actions/gpu-box-app
         with:
+          deployer-repo: ${{ secrets.DEPLOYER_REPO }}
           action: deploy
           version: ${{ steps.release.outputs.version }}
           op-service-account-token: ${{ secrets.OP_SA_DEPLOY }}

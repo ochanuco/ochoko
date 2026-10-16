@@ -1,18 +1,19 @@
 ﻿# ochoko を GPU 機に初めて入れるときに、管理者権限で一度だけ手で実行する。何度実行しても同じ状態になる。
 #   - C:\apps\ochoko\{releases,data} と C:\ProgramData\ochoko を作り、権限を付ける
 #   - ログオン時に実行ユーザーの非昇格で動くタスク ochoko を登録する
-#   - 192.168.50.10 から TCP 8190 への受信を許す
+#   - Gateway(既定 192.168.50.10)から TCP 8190 への受信を許す
 #   - http://+:8190/ の URL ACL を実行ユーザーに与える
 # アカウントは名前の解決が ssh 越しに失敗するので、SID で扱う。
 param(
     # ochoko を動かすユーザーの SID。省略すると、このスクリプトを実行しているユーザー
-    [string]$UserSid = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
+    [string]$UserSid = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value,
+    # TCP 8190 への受信を許すアドレス。カンマ区切りで複数、または CIDR も書ける
+    [string[]]$Gateway = @("192.168.50.10")
 )
 $ErrorActionPreference = "Stop"
 
 $App = "ochoko"
 $Port = 8190
-$Gateway = "192.168.50.10"
 $AppRoot = "C:\apps\$App"
 $Config = Join-Path $env:ProgramData $App
 $Admins = "*S-1-5-32-544"

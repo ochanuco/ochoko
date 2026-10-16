@@ -3,7 +3,7 @@
 # only when it concluded success.
 set -euo pipefail
 
-repo=ochanuco/chabatake
+repo=$DEPLOYER_REPO
 workflow=gpu-box-app.yml
 
 body=$(jq -n --arg action "$ACTION" --arg version "$VERSION" --arg request_id "$REQUEST_ID" '{
