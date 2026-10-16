@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ochoko-win-x64.zip を Release $VERSION として $SHA に対して公開する。
-# $SHA の公開済み Release があればそれを使う。version=<tag> を $GITHUB_OUTPUT に書く。
+# $SHA の公開済み Release があればそれを使う。
 set -euo pipefail
 
 existing=$(gh release list --limit 50 --exclude-drafts --json tagName \
@@ -18,4 +18,3 @@ else
   gh release edit "$version" --draft=false
   echo "published release $version"
 fi
-echo "version=$version" >> "$GITHUB_OUTPUT"

@@ -1,9 +1,8 @@
-name: deploy
-run-name: deploy ochoko @ ${{ inputs.ref || github.sha }}
+name: release
+run-name: release ochoko @ ${{ inputs.ref || github.sha }}
 
-# 本番(GPU 機)へのデプロイ。main への push で出し、承認は Environment production で止める。
-# workflow_dispatch はロールバックと出し直し用。zip を Release として公開し、
-# GPU 機への配備は外部の配備ワークフローに任せる。
+# main への push で zip を Release として公開する。配備はこのリポジトリの外で、
+# 配備側が Release を拾って行う。workflow_dispatch は main 上の古いコミットの出し直し用。
 on:
   push:
     branches: [main]
@@ -15,7 +14,7 @@ on:
   workflow_dispatch:
     inputs:
       ref:
-        description: デプロイする ref(main、または main 上のコミット SHA。古い SHA はロールバック)
+        description: 公開する ref(main、または main 上のコミット SHA)
         required: true
         default: main
 
@@ -23,7 +22,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: deploy-production
+  group: release
   cancel-in-progress: false
 
 jobs:
@@ -81,12 +80,11 @@ jobs:
           path: ochoko-win-x64.zip
           if-no-files-found: error
 
-  deploy:
-    name: publish the release and deploy it to the GPU box
+  publish:
+    name: publish the release
     needs: build
     runs-on: ubuntu-latest
-    environment: production
-    timeout-minutes: 240
+    timeout-minutes: 10
     permissions:
       contents: write
     env:
@@ -105,14 +103,6 @@ jobs:
         with:
           name: ochoko-zip
 
-      - id: release
-        run: bash .github/scripts/publish.sh
-
-      - uses: ./.github/actions/gpu-box-app
-        with:
-          deployer-repo: ${{ secrets.DEPLOYER_REPO }}
-          action: deploy
-          version: ${{ steps.release.outputs.version }}
-          op-service-account-token: ${{ secrets.OP_SA_DEPLOY }}
+      - run: bash .github/scripts/publish.sh
 
       - run: bash .github/scripts/prune.sh 3

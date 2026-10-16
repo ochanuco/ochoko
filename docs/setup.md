@@ -1,6 +1,6 @@
 # Setting up ochoko
 
-This installs ochoko by hand on one Windows machine. The automated pipeline in
+This installs ochoko by hand on one Windows machine. A deployer following
 [deployment.md](deployment.md) repeats steps 3 and 6 for each release; the
 rest is done once.
 
