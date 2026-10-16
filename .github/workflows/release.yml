@@ -1,8 +1,8 @@
 name: release
 run-name: release ochoko @ ${{ inputs.ref || github.sha }}
 
-# main への push で zip を Release として公開する。配備はこのリポジトリの外で、
-# 配備側が Release を拾って行う。workflow_dispatch は main 上の古いコミットの出し直し用。
+# main への push で zip を Release として公開し、設定があれば配備側に知らせる。
+# 配備はこのリポジトリの外で、配備側が Release を拾って行う。workflow_dispatch は main 上の古いコミットの出し直し用。
 on:
   push:
     branches: [main]
@@ -106,3 +106,39 @@ jobs:
       - run: bash .github/scripts/publish.sh
 
       - run: bash .github/scripts/prune.sh 3
+
+  # DEPLOYER_* の secret がなければ何もしない(fork はここで止まる)。
+  # 配備側のワークフローを起こすだけで結果は待たない。承認と結果は配備側が扱う。
+  notify:
+    name: notify the deployer
+    needs: publish
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      DEPLOYER_REPO: ${{ secrets.DEPLOYER_REPO }}
+      DEPLOYER_WORKFLOW: ${{ secrets.DEPLOYER_WORKFLOW }}
+    steps:
+      - id: repo
+        if: env.DEPLOYER_REPO != '' && env.DEPLOYER_WORKFLOW != ''
+        run: |
+          if [[ ! "$DEPLOYER_REPO" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]]; then
+            echo "::error::DEPLOYER_REPO must be owner/name"
+            exit 1
+          fi
+          echo "owner=${DEPLOYER_REPO%%/*}" >> "$GITHUB_OUTPUT"
+          echo "name=${DEPLOYER_REPO#*/}" >> "$GITHUB_OUTPUT"
+
+      - id: token
+        if: steps.repo.outcome == 'success'
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          client-id: ${{ secrets.DEPLOYER_APP_CLIENT_ID }}
+          private-key: ${{ secrets.DEPLOYER_APP_PRIVATE_KEY }}
+          owner: ${{ steps.repo.outputs.owner }}
+          repositories: ${{ steps.repo.outputs.name }}
+          permission-actions: write
+
+      - if: steps.repo.outcome == 'success'
+        env:
+          GH_TOKEN: ${{ steps.token.outputs.token }}
+        run: gh workflow run "$DEPLOYER_WORKFLOW" -R "$DEPLOYER_REPO" --ref main

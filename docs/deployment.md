@@ -15,9 +15,19 @@ an older commit):
 2. `publish` publishes a GitHub Release `r<run_number>-<sha7>` with the zip,
    reusing an existing Release of the same commit.
 3. Releases older than the newest 3 are deleted with their tags.
+4. `notify` starts the deployer's workflow, if the secrets below are set, and
+   does not wait for it.
 
-Release publishing uses the workflow's own `GITHUB_TOKEN`; no secrets are
-needed.
+Release publishing uses the workflow's own `GITHUB_TOKEN`. Without the
+secrets below, `notify` does nothing and the deployer has to find new Releases
+itself.
+
+| Secret | Value |
+|---|---|
+| `DEPLOYER_REPO` | `owner/name` of the deployer repository |
+| `DEPLOYER_WORKFLOW` | file name of the deployer workflow; it is started on `main` by `workflow_dispatch` with no inputs, so it must look up the latest Release itself |
+| `DEPLOYER_APP_CLIENT_ID` | Client ID of a GitHub App installed on the deployer repository with the Actions: write permission |
+| `DEPLOYER_APP_PRIVATE_KEY` | private key of that App |
 
 ## The deployer contract
 
