@@ -12,8 +12,10 @@ an older commit):
 
 1. `build` tests, publishes, and zips `ochoko-win-x64.zip` (exe, dependencies,
    `deploy/`, `release.json` with `version` and `commit`).
-2. `publish` publishes a GitHub Release `r<run_number>-<sha7>` with the zip,
-   reusing an existing Release of the same commit.
+2. `publish` waits for approval in the `release` Environment, then publishes a
+   GitHub Release `r<run_number>-<sha7>` with the zip, reusing an existing
+   Release of the same commit. Add required reviewers to the Environment to
+   gate releases; without them `publish` runs at once.
 3. Releases older than the newest 3 are deleted with their tags.
 4. `notify` starts the deployer's workflow, if the secrets below are set, and
    does not wait for it.

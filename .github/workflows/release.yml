@@ -84,6 +84,8 @@ jobs:
     name: publish the release
     needs: build
     runs-on: ubuntu-latest
+    # 承認者を付けておけば、承認されるまで Release は公開されず配備側にも届かない
+    environment: release
     timeout-minutes: 10
     permissions:
       contents: write
